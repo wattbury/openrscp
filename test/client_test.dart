@@ -165,7 +165,11 @@ void pvTrackerTests() {
         expect(t.every((x) => x.active), isTrue);
         expect(t[1].voltageV, closeTo(93, 0.01));
         expect(t[1].energyAllWh, closeTo(1120600, 1));
-        expect(t[1].inputLimitW, 6000, reason: 'input limit, not module power');
+        expect(
+          t[1].reportedMaxPowerW,
+          6000,
+          reason: 'reported as is, not interpreted',
+        );
         expect(
           t.every((x) => x.pviIndex == 0),
           isTrue,

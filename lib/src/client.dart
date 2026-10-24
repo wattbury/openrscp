@@ -171,9 +171,11 @@ class PvTracker {
   final int index;
   final double? powerW, voltageV, currentA, energyAllWh;
 
-  /// Hardware limit of this input (PVI_DC_MAX_POWER): the most DC power the input accepts.
-  /// This is not the installed module power; PV fields are often larger and get clipped.
-  final double? inputLimitW;
+  /// Value the unit reports as PVI_DC_MAX_POWER for this input. Its meaning differs by device
+  /// and is not documented: an S10E reported 6000 W per input while its inverter handles
+  /// 12 kW DC in total and one input carries 7.1 kWp without clipping. Do not treat it as a
+  /// hard limit or as the installed module power; the app asks the user for kWp instead.
+  final double? reportedMaxPowerW;
 
   /// True when the input shows signs of a connected PV field: lifetime energy, power or
   /// a voltage of at least 20 V. PVI_USED_STRING_COUNT is not reliable for this (a real
@@ -186,7 +188,7 @@ class PvTracker {
     this.powerW,
     this.voltageV,
     this.currentA,
-    this.inputLimitW,
+    this.reportedMaxPowerW,
     this.energyAllWh,
   });
   Map<String, Object?> toJson() => {
@@ -196,7 +198,7 @@ class PvTracker {
     'powerW': powerW,
     'voltageV': voltageV,
     'currentA': currentA,
-    'inputLimitW': inputLimitW,
+    'reportedMaxPowerW': reportedMaxPowerW,
     'energyAllWh': energyAllWh,
   };
 }
@@ -428,7 +430,7 @@ class E3dcClient {
           powerW: p,
           voltageV: u,
           currentA: v(RscpTag.PVI_DC_CURRENT),
-          inputLimitW: v(RscpTag.PVI_DC_MAX_POWER),
+          reportedMaxPowerW: v(RscpTag.PVI_DC_MAX_POWER),
           energyAllWh: e,
           active: (e ?? 0) > 0 || (p ?? 0) > 0 || (u ?? 0) >= 20,
         ),

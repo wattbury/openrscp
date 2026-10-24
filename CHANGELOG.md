@@ -7,4 +7,4 @@
 - `DbSummary`: grid fields named `gridPurchaseWh` (DB_GRID_POWER_OUT) and `gridFeedInWh` (DB_GRID_POWER_IN), verified against autarky.
 - Portal transport: responses on the virtual connection are no longer mistaken for handshake messages.
 - `E3dcClient.wallbox()` and `detectWallboxes()`: presence via WB_DEVICE_STATE / WB_APP_SOFTWARE.
-- `E3dcClient.pvTrackers()`: all DC inputs of all inverters with live values, lifetime energy, input limit (`inputLimitW`, not the installed module power) and an `active` flag based on measurements instead of `PVI_USED_STRING_COUNT`.
+- `E3dcClient.pvTrackers()`: all DC inputs of all inverters with live values, lifetime energy, the reported `PVI_DC_MAX_POWER` (`reportedMaxPowerW`, neither a hard limit nor module power) and an `active` flag based on measurements instead of `PVI_USED_STRING_COUNT`.
