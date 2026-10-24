@@ -81,7 +81,15 @@ Future<void> main() async {
   );
   print('Typ: ${show(pviChild(pvi, RscpTag.PVI_TYPE))}');
 
-  final count = (used != null && !used.isError) ? (used.asInt ?? 2) : 2;
+  // Alle DC-Eingänge abfragen, nicht nur die als genutzt gemeldeten: PVI_USED_STRING_COUNT
+  // stimmt nicht immer mit der Belegung überein. Ein Eingang mit Spannung oder Ertrag ist belegt.
+  final maxS = pviChild(pvi, RscpTag.PVI_DC_MAX_STRING_COUNT);
+  final usedN = (used != null && !used.isError) ? (used.asInt ?? 0) : 0;
+  final maxN = (maxS != null && !maxS.isError) ? (maxS.asInt ?? 2) : 2;
+  final count = maxN > usedN ? maxN : usedN;
+  print(
+    'abgefragt werden $count DC-Eingänge (RSCP nennt sie Strings, in der App heißen sie Tracker)',
+  );
   final energies = <double>[];
   for (var s = 0; s < count; s++) {
     final r = await ask(
