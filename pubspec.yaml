@@ -1,0 +1,16 @@
+name: openrscp
+description: "RSCP protocol for E3/DC home power stations (S10): TLV codec, local transport (Rijndael-256) and portal tunnel (websocket relay)."
+version: 0.1.0
+repository: https://github.com/wattbury/openrscp
+
+environment:
+  sdk: ^3.13.7
+
+# Add regular dependencies here.
+dependencies:
+  crypto: ^3.0.6
+  meta: ^1.16.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.6
