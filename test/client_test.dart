@@ -48,6 +48,7 @@ RscpMessage _wbData(int index, {bool? connected, int? sw}) =>
     ]);
 
 void main() {
+  pvTrackerTests();
   test('no wallbox: errors in the WB_DATA container mean absent', () async {
     final c = E3dcClient(FakeTransport((req) => [_wbData(_wbIndex(req))]));
     final w = await c.wallbox(0);
@@ -93,5 +94,88 @@ void main() {
   test('app software alone counts as present', () async {
     final c = E3dcClient(FakeTransport((req) => [_wbData(0, sw: 17)]));
     expect((await c.wallbox(0)).present, isTrue);
+  });
+}
+
+RscpMessage _pviValue(RscpTag t, int index, double v) =>
+    RscpMessage.container(t, [
+      RscpMessage.uint16(RscpTag.PVI_INDEX, index),
+      RscpMessage.float32(RscpTag.PVI_VALUE, v),
+    ]);
+
+/// PVI responses as a real S10E sent them on 2026-10-25 (night): used count 1, but both inputs carry a field.
+List<RscpMessage> _pviHandler(
+  List<RscpMessage> req, {
+  required Map<int, List<double>> inputs,
+  int used = 1,
+  int max = 2,
+}) {
+  final r = req.single;
+  final dcPower = r.find(RscpTag.PVI_REQ_DC_POWER);
+  if (dcPower == null) {
+    return [
+      RscpMessage.container(RscpTag.PVI_DATA, [
+        RscpMessage.uint16(RscpTag.PVI_INDEX, 0),
+        RscpMessage.uchar8(RscpTag.PVI_DC_MAX_STRING_COUNT, max),
+        RscpMessage.uchar8(RscpTag.PVI_USED_STRING_COUNT, used),
+      ]),
+    ];
+  }
+  final i = dcPower.value as int;
+  final x = inputs[i]!; // power, voltage, current, maxPower, energyWh
+  return [
+    RscpMessage.container(RscpTag.PVI_DATA, [
+      RscpMessage.uint16(RscpTag.PVI_INDEX, 0),
+      _pviValue(RscpTag.PVI_DC_POWER, i, x[0]),
+      _pviValue(RscpTag.PVI_DC_VOLTAGE, i, x[1]),
+      _pviValue(RscpTag.PVI_DC_CURRENT, i, x[2]),
+      _pviValue(RscpTag.PVI_DC_MAX_POWER, i, x[3]),
+      _pviValue(RscpTag.PVI_DC_STRING_ENERGY_ALL, i, x[4]),
+    ]),
+  ];
+}
+
+void pvTrackerTests() {
+  group('pvTrackers', () {
+    test(
+      'both inputs active although the unit reports one used string',
+      () async {
+        final c = E3dcClient(
+          FakeTransport(
+            (req) => _pviHandler(
+              req,
+              inputs: {
+                0: [0, 39, 0, 6000, 30881600],
+                1: [0, 93, 0, 6000, 1120600],
+              },
+            ),
+          ),
+        );
+        final t = await c.pvTrackers();
+        expect(t.length, 2);
+        expect(t.every((x) => x.active), isTrue);
+        expect(t[1].voltageV, closeTo(93, 0.01));
+        expect(t[1].energyAllWh, closeTo(1120600, 1));
+      },
+    );
+
+    test('an unused input without voltage and energy is inactive', () async {
+      final c = E3dcClient(
+        FakeTransport(
+          (req) => _pviHandler(
+            req,
+            used: 1,
+            max: 2,
+            inputs: {
+              0: [3420, 412, 8.3, 6000, 1000000],
+              1: [0, 0, 0, 6000, 0],
+            },
+          ),
+        ),
+      );
+      final t = await c.pvTrackers();
+      expect(t[0].active, isTrue);
+      expect(t[1].active, isFalse);
+    });
   });
 }

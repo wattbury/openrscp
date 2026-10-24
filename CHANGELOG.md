@@ -7,3 +7,4 @@
 - `DbSummary`: grid fields named `gridPurchaseWh` (DB_GRID_POWER_OUT) and `gridFeedInWh` (DB_GRID_POWER_IN), verified against autarky.
 - Portal transport: responses on the virtual connection are no longer mistaken for handshake messages.
 - `E3dcClient.wallbox()` and `detectWallboxes()`: presence via WB_DEVICE_STATE / WB_APP_SOFTWARE.
+- `E3dcClient.pvTrackers()`: all DC inputs with live values, lifetime energy and an `active` flag based on measurements instead of `PVI_USED_STRING_COUNT`.

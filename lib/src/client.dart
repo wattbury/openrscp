@@ -161,6 +161,36 @@ class WallboxInfo {
   };
 }
 
+/// One DC input of the PV inverter. RSCP calls it a "string"; electrically it is an MPP tracker
+/// that may carry several parallel strings, which the unit only measures together.
+class PvTracker {
+  final int index;
+  final double? powerW, voltageV, currentA, maxPowerW, energyAllWh;
+
+  /// True when the input shows signs of a connected PV field: lifetime energy, power or
+  /// a voltage of at least 20 V. PVI_USED_STRING_COUNT is not reliable for this (a real
+  /// system with two active trackers reported 1).
+  final bool active;
+  const PvTracker({
+    required this.index,
+    required this.active,
+    this.powerW,
+    this.voltageV,
+    this.currentA,
+    this.maxPowerW,
+    this.energyAllWh,
+  });
+  Map<String, Object?> toJson() => {
+    'index': index,
+    'active': active,
+    'powerW': powerW,
+    'voltageV': voltageV,
+    'currentA': currentA,
+    'maxPowerW': maxPowerW,
+    'energyAllWh': energyAllWh,
+  };
+}
+
 /// High-level requests on top of any [RscpTransport].
 class E3dcClient {
   final RscpTransport transport;
@@ -328,5 +358,59 @@ class E3dcClient {
       found.add(w);
     }
     return found;
+  }
+
+  /// Reads all DC inputs of PV inverter [pviIndex] and marks which ones are in use.
+  /// Queries max(DC_MAX_STRING_COUNT, USED_STRING_COUNT) inputs, because the used count
+  /// can be wrong.
+  Future<List<PvTracker>> pvTrackers({int pviIndex = 0}) async {
+    final base = await transport.sendOne(
+      RscpMessage.container(RscpTag.PVI_REQ_DATA, [
+        RscpMessage.uint16(RscpTag.PVI_INDEX, pviIndex),
+        RscpMessage.none(RscpTag.PVI_REQ_DC_MAX_STRING_COUNT),
+        RscpMessage.none(RscpTag.PVI_REQ_USED_STRING_COUNT),
+      ]),
+    );
+    int countOf(RscpTag t) {
+      final m = base.isContainer ? base.find(t) : null;
+      return (m == null || m.isError) ? 0 : (m.asInt ?? 0);
+    }
+
+    final maxN = countOf(RscpTag.PVI_DC_MAX_STRING_COUNT);
+    final usedN = countOf(RscpTag.PVI_USED_STRING_COUNT);
+    final n = maxN > usedN ? maxN : usedN;
+    final out = <PvTracker>[];
+    for (var i = 0; i < n; i++) {
+      final r = await transport.sendOne(
+        RscpMessage.container(RscpTag.PVI_REQ_DATA, [
+          RscpMessage.uint16(RscpTag.PVI_INDEX, pviIndex),
+          RscpMessage.uint16(RscpTag.PVI_REQ_DC_POWER, i),
+          RscpMessage.uint16(RscpTag.PVI_REQ_DC_VOLTAGE, i),
+          RscpMessage.uint16(RscpTag.PVI_REQ_DC_CURRENT, i),
+          RscpMessage.uint16(RscpTag.PVI_REQ_DC_MAX_POWER, i),
+          RscpMessage.uint16(RscpTag.PVI_REQ_DC_STRING_ENERGY_ALL, i),
+        ]),
+      );
+      double? v(RscpTag t) {
+        final c = r.isContainer ? r.find(t) : null;
+        if (c == null || c.isError) return null;
+        return c.isContainer ? c.find(RscpTag.PVI_VALUE)?.asDouble : c.asDouble;
+      }
+
+      final p = v(RscpTag.PVI_DC_POWER), u = v(RscpTag.PVI_DC_VOLTAGE);
+      final e = v(RscpTag.PVI_DC_STRING_ENERGY_ALL);
+      out.add(
+        PvTracker(
+          index: i,
+          powerW: p,
+          voltageV: u,
+          currentA: v(RscpTag.PVI_DC_CURRENT),
+          maxPowerW: v(RscpTag.PVI_DC_MAX_POWER),
+          energyAllWh: e,
+          active: (e ?? 0) > 0 || (p ?? 0) > 0 || (u ?? 0) >= 20,
+        ),
+      );
+    }
+    return out;
   }
 }
