@@ -134,6 +134,33 @@ class DbSummary {
   };
 }
 
+/// Presence and state of one wallbox slot.
+///
+/// A slot counts as present when the system reports the device as connected or returns an
+/// app software version. Systems without a wallbox answer with an error or empty values.
+class WallboxInfo {
+  final int index;
+  final bool present;
+  final bool? connected, working, inService;
+  final int? appSoftware;
+  const WallboxInfo({
+    required this.index,
+    required this.present,
+    this.connected,
+    this.working,
+    this.inService,
+    this.appSoftware,
+  });
+  Map<String, Object?> toJson() => {
+    'index': index,
+    'present': present,
+    'connected': connected,
+    'working': working,
+    'inService': inService,
+    'appSoftware': appSoftware,
+  };
+}
+
 /// High-level requests on top of any [RscpTransport].
 class E3dcClient {
   final RscpTransport transport;
@@ -261,5 +288,45 @@ class E3dcClient {
       consumedProductionPct: d(RscpTag.DB_CONSUMED_PRODUCTION),
       socPct: d(RscpTag.DB_BAT_CHARGE_LEVEL),
     );
+  }
+
+  /// Queries wallbox slot [index] (0-based).
+  Future<WallboxInfo> wallbox([int index = 0]) async {
+    final m = await transport.sendOne(
+      RscpMessage.container(RscpTag.WB_REQ_DATA, [
+        RscpMessage.uchar8(RscpTag.WB_INDEX, index),
+        RscpMessage.none(RscpTag.WB_REQ_DEVICE_STATE),
+        RscpMessage.none(RscpTag.WB_REQ_APP_SOFTWARE),
+      ]),
+    );
+    if (m.isError || !m.isContainer) {
+      return WallboxInfo(index: index, present: false);
+    }
+    final ds = m.find(RscpTag.WB_DEVICE_STATE);
+    bool? flag(RscpTag t) =>
+        (ds != null && ds.isContainer) ? ds.valueOf<bool>(t) : null;
+    final connected = flag(RscpTag.WB_DEVICE_CONNECTED);
+    final sw = m.find(RscpTag.WB_APP_SOFTWARE);
+    final appSoftware = (sw != null && !sw.isError) ? sw.asInt : null;
+    return WallboxInfo(
+      index: index,
+      present: connected == true || (appSoftware != null && appSoftware != 0),
+      connected: connected,
+      working: flag(RscpTag.WB_DEVICE_WORKING),
+      inService: flag(RscpTag.WB_DEVICE_IN_SERVICE),
+      appSoftware: appSoftware,
+    );
+  }
+
+  /// Probes slots 0.. until the first absent one (max [maxCount], S10 supports up to 8).
+  /// Returns only present wallboxes; an empty list means "hide the wallbox everywhere".
+  Future<List<WallboxInfo>> detectWallboxes({int maxCount = 8}) async {
+    final found = <WallboxInfo>[];
+    for (var i = 0; i < maxCount; i++) {
+      final w = await wallbox(i);
+      if (!w.present) break;
+      found.add(w);
+    }
+    return found;
   }
 }

@@ -27,6 +27,11 @@ Future<void> main(List<String> args) async {
   final c = E3dcClient(t);
   print('system:   ${jsonEncode((await c.systemInfo()).toJson())}');
   print('settings: ${jsonEncode((await c.powerSettings()).toJson())}');
+  final wbs = await c.detectWallboxes();
+  print(
+    'wallbox:  ${wbs.isEmpty ? 'keine gemeldet' : jsonEncode(wbs.map((w) => w.toJson()).toList())}',
+  );
+  print('wallbox0: ${jsonEncode((await c.wallbox(0)).toJson())}');
   final today = DateTime.now();
   print(
     'today:    ${jsonEncode((await c.dbSummary(DateTime(today.year, today.month, today.day), const Duration(days: 1))).toJson())}',
