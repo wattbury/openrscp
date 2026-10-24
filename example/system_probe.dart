@@ -111,7 +111,7 @@ Future<void> main() async {
     if (e != null) energies.add(e);
     print(
       '  String ${s + 1}: ${f(RscpTag.PVI_DC_POWER, 0, 'W')} · ${f(RscpTag.PVI_DC_VOLTAGE, 1, 'V')} · '
-      '${f(RscpTag.PVI_DC_CURRENT, 2, 'A')} · max ${f(RscpTag.PVI_DC_MAX_POWER, 0, 'W')} · '
+      '${f(RscpTag.PVI_DC_CURRENT, 2, 'A')} · Eingangsgrenze ${f(RscpTag.PVI_DC_MAX_POWER, 0, 'W')} · '
       'Ertrag gesamt ${e == null ? '—' : '${(e / 1000).toStringAsFixed(1)} kWh'}',
     );
   }

@@ -111,6 +111,15 @@ List<RscpMessage> _pviHandler(
   int max = 2,
 }) {
   final r = req.single;
+  if ((r.valueOf<int>(RscpTag.PVI_INDEX) ?? 0) != 0) {
+    return [
+      RscpMessage(
+        RscpTag.PVI_DATA.value,
+        RscpType.error,
+        RscpErrorCode.RSCP_ERR_NOT_AVAILABLE,
+      ),
+    ];
+  }
   final dcPower = r.find(RscpTag.PVI_REQ_DC_POWER);
   if (dcPower == null) {
     return [
@@ -156,6 +165,12 @@ void pvTrackerTests() {
         expect(t.every((x) => x.active), isTrue);
         expect(t[1].voltageV, closeTo(93, 0.01));
         expect(t[1].energyAllWh, closeTo(1120600, 1));
+        expect(t[1].inputLimitW, 6000, reason: 'input limit, not module power');
+        expect(
+          t.every((x) => x.pviIndex == 0),
+          isTrue,
+          reason: 'probing stops at the first inverter that does not answer',
+        );
       },
     );
 

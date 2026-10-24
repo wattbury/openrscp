@@ -161,32 +161,42 @@ class WallboxInfo {
   };
 }
 
-/// One DC input of the PV inverter. RSCP calls it a "string"; electrically it is an MPP tracker
+/// One DC input of a PV inverter. RSCP calls it a "string"; electrically it is an MPP tracker
 /// that may carry several parallel strings, which the unit only measures together.
 class PvTracker {
+  /// Inverter (PVI) index; 0 on most systems, higher on systems with several inverters.
+  final int pviIndex;
+
+  /// Input index within the inverter.
   final int index;
-  final double? powerW, voltageV, currentA, maxPowerW, energyAllWh;
+  final double? powerW, voltageV, currentA, energyAllWh;
+
+  /// Hardware limit of this input (PVI_DC_MAX_POWER): the most DC power the input accepts.
+  /// This is not the installed module power; PV fields are often larger and get clipped.
+  final double? inputLimitW;
 
   /// True when the input shows signs of a connected PV field: lifetime energy, power or
   /// a voltage of at least 20 V. PVI_USED_STRING_COUNT is not reliable for this (a real
   /// system with two active trackers reported 1).
   final bool active;
   const PvTracker({
+    required this.pviIndex,
     required this.index,
     required this.active,
     this.powerW,
     this.voltageV,
     this.currentA,
-    this.maxPowerW,
+    this.inputLimitW,
     this.energyAllWh,
   });
   Map<String, Object?> toJson() => {
+    'pviIndex': pviIndex,
     'index': index,
     'active': active,
     'powerW': powerW,
     'voltageV': voltageV,
     'currentA': currentA,
-    'maxPowerW': maxPowerW,
+    'inputLimitW': inputLimitW,
     'energyAllWh': energyAllWh,
   };
 }
@@ -360,10 +370,20 @@ class E3dcClient {
     return found;
   }
 
-  /// Reads all DC inputs of PV inverter [pviIndex] and marks which ones are in use.
-  /// Queries max(DC_MAX_STRING_COUNT, USED_STRING_COUNT) inputs, because the used count
-  /// can be wrong.
-  Future<List<PvTracker>> pvTrackers({int pviIndex = 0}) async {
+  /// Reads the DC inputs of all PV inverters (index 0 up to [maxInverters] - 1, stopping at the
+  /// first one that does not answer) and marks which inputs are in use. Nothing about the
+  /// device is assumed: tracker count, inverter count and limits all come from the unit.
+  Future<List<PvTracker>> pvTrackers({int maxInverters = 4}) async {
+    final out = <PvTracker>[];
+    for (var p = 0; p < maxInverters; p++) {
+      final list = await _pvTrackersOf(p);
+      if (list == null) break;
+      out.addAll(list);
+    }
+    return out;
+  }
+
+  Future<List<PvTracker>?> _pvTrackersOf(int pviIndex) async {
     final base = await transport.sendOne(
       RscpMessage.container(RscpTag.PVI_REQ_DATA, [
         RscpMessage.uint16(RscpTag.PVI_INDEX, pviIndex),
@@ -371,14 +391,16 @@ class E3dcClient {
         RscpMessage.none(RscpTag.PVI_REQ_USED_STRING_COUNT),
       ]),
     );
+    if (base.isError || !base.isContainer) return null;
     int countOf(RscpTag t) {
-      final m = base.isContainer ? base.find(t) : null;
+      final m = base.find(t);
       return (m == null || m.isError) ? 0 : (m.asInt ?? 0);
     }
 
     final maxN = countOf(RscpTag.PVI_DC_MAX_STRING_COUNT);
     final usedN = countOf(RscpTag.PVI_USED_STRING_COUNT);
     final n = maxN > usedN ? maxN : usedN;
+    if (n == 0) return null;
     final out = <PvTracker>[];
     for (var i = 0; i < n; i++) {
       final r = await transport.sendOne(
@@ -401,11 +423,12 @@ class E3dcClient {
       final e = v(RscpTag.PVI_DC_STRING_ENERGY_ALL);
       out.add(
         PvTracker(
+          pviIndex: pviIndex,
           index: i,
           powerW: p,
           voltageV: u,
           currentA: v(RscpTag.PVI_DC_CURRENT),
-          maxPowerW: v(RscpTag.PVI_DC_MAX_POWER),
+          inputLimitW: v(RscpTag.PVI_DC_MAX_POWER),
           energyAllWh: e,
           active: (e ?? 0) > 0 || (p ?? 0) > 0 || (u ?? 0) >= 20,
         ),
