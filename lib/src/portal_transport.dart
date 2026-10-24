@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:meta/meta.dart';
 
 import 'codec.dart';
 import 'message.dart';
@@ -35,6 +36,8 @@ class PortalTransport extends RscpTransport {
   final void Function(String)? log;
 
   WebSocket? _ws;
+  void Function(Uint8List)? _sink;
+  bool _virtRequested = false;
   StreamSubscription? _sub;
   int _conId = 0;
   int _authLevel = 0;
@@ -64,14 +67,16 @@ class PortalTransport extends RscpTransport {
   RscpAuthLevel get authLevel => RscpAuthLevel.fromValue(_virtAuthLevel);
 
   @override
-  bool get isConnected => _virtConId != null && _ws != null;
+  bool get isConnected => _virtConId != null && _sink != null;
 
   @override
   Future<void> connect() async {
     await close();
     _connected = Completer<void>();
     _log('connecting to $endpoint');
-    _ws = await WebSocket.connect(endpoint.toString()).timeout(timeout);
+    final ws = await WebSocket.connect(endpoint.toString()).timeout(timeout);
+    _ws = ws;
+    _sink = ws.add;
     _sub = _ws!.listen(
       _onData,
       onError: _onError,
@@ -95,6 +100,8 @@ class PortalTransport extends RscpTransport {
     _sub = null;
     await _ws?.close();
     _ws = null;
+    _sink = null;
+    _virtRequested = false;
     _conId = 0;
     _authLevel = 0;
     _virtConId = null;
@@ -142,7 +149,22 @@ class PortalTransport extends RscpTransport {
   }
 
   void _sendFrame(RscpMessage m) =>
-      _ws?.add(RscpCodec.frame(RscpCodec.encode(m)));
+      _sink?.call(RscpCodec.frame(RscpCodec.encode(m)));
+
+  /// Test hook: route outgoing frames to [sink] instead of a websocket and start the handshake state machine.
+  @visibleForTesting
+  void attachForTesting(void Function(Uint8List) sink) {
+    _sink = sink;
+    _connected = Completer<void>();
+  }
+
+  /// Test hook: completes when the virtual connection is registered (after [attachForTesting]).
+  @visibleForTesting
+  Future<void> get handshakeDone => _connected?.future ?? Future.value();
+
+  /// Test hook: feed one incoming websocket message.
+  @visibleForTesting
+  void handleIncoming(Uint8List bytes) => _onData(bytes);
 
   void _onData(dynamic data) {
     if (data is! List<int> || data.isEmpty) return;
@@ -221,19 +243,32 @@ class PortalTransport extends RscpTransport {
       _log('bad inner frame: $e');
       return;
     }
+    // Messages on the base connection belong to the handshake (the portal asks for device info and
+    // assigns a pseudo serial). Messages on the virtual connection are answers to our requests, even
+    // when they carry the same tags, e.g. INFO_SERIAL_NUMBER as answer to INFO_REQ_SERIAL_NUMBER.
+    final outerId = msg.valueOf<int>(RscpTag.SERVER_CONNECTION_ID);
+    final handshake =
+        _virtConId == null ||
+        (outerId != null && outerId == _conId && outerId != _virtConId);
     final replies = <RscpMessage>[];
     final responses = <RscpMessage>[];
     for (final m in inner) {
+      if (!handshake) {
+        responses.add(m);
+        continue;
+      }
       final r = _infoReply(m);
       if (r != null) {
         replies.add(r);
       } else if (m.tagEnum == RscpTag.INFO_SERIAL_NUMBER) {
+        if (_virtRequested) continue;
+        _virtRequested = true;
         _log(
           'portal assigned serial ${m.value}; requesting virtual connection for $serialWithPrefix',
         );
         _requestVirtualConnection();
       } else {
-        responses.add(m);
+        _log('ignored handshake message ${m.tagName}');
       }
     }
     if (replies.isNotEmpty) {
