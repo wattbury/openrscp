@@ -91,13 +91,16 @@ class PowerSettings {
 }
 
 /// Summed energy values (Wh) for a period from the unit's database.
+///
+/// Mapping (verified against autarky on a real S10E): DB_GRID_POWER_OUT is energy drawn from the grid
+/// (purchase), DB_GRID_POWER_IN is energy sent into the grid (feed-in). The names are from the grid's view.
 class DbSummary {
   final DateTime start;
   final Duration span;
   final double solarWh,
       houseWh,
-      gridInWh,
-      gridOutWh,
+      gridPurchaseWh,
+      gridFeedInWh,
       batteryInWh,
       batteryOutWh,
       autarkyPct,
@@ -108,8 +111,8 @@ class DbSummary {
     required this.span,
     required this.solarWh,
     required this.houseWh,
-    required this.gridInWh,
-    required this.gridOutWh,
+    required this.gridPurchaseWh,
+    required this.gridFeedInWh,
     required this.batteryInWh,
     required this.batteryOutWh,
     required this.autarkyPct,
@@ -121,8 +124,8 @@ class DbSummary {
     'spanSeconds': span.inSeconds,
     'solarWh': solarWh,
     'houseWh': houseWh,
-    'gridInWh': gridInWh,
-    'gridOutWh': gridOutWh,
+    'gridPurchaseWh': gridPurchaseWh,
+    'gridFeedInWh': gridFeedInWh,
     'batteryInWh': batteryInWh,
     'batteryOutWh': batteryOutWh,
     'autarkyPct': autarkyPct,
@@ -250,8 +253,8 @@ class E3dcClient {
       span: span,
       solarWh: d(RscpTag.DB_DC_POWER),
       houseWh: d(RscpTag.DB_CONSUMPTION),
-      gridInWh: d(RscpTag.DB_GRID_POWER_OUT),
-      gridOutWh: d(RscpTag.DB_GRID_POWER_IN),
+      gridPurchaseWh: d(RscpTag.DB_GRID_POWER_OUT),
+      gridFeedInWh: d(RscpTag.DB_GRID_POWER_IN),
       batteryInWh: d(RscpTag.DB_BAT_POWER_IN),
       batteryOutWh: d(RscpTag.DB_BAT_POWER_OUT),
       autarkyPct: d(RscpTag.DB_AUTARKY),
