@@ -44,5 +44,19 @@ Future<void> main() async {
       '–${p.endHour.toString().padLeft(2, '0')}:${p.endMinute.toString().padLeft(2, '0')}',
     );
   }
+  // Raw answers of both lock-period requests; newer firmware may only fill the "_2" variant.
+  for (final req in [
+    RscpTag.EMS_REQ_GET_IDLE_PERIODS,
+    RscpTag.EMS_REQ_GET_IDLE_PERIODS_2,
+    RscpTag.EMS_REQ_GET_IDLE_PERIODS_ENABLE,
+  ]) {
+    try {
+      final m = await t.sendOne(RscpMessage.none(req));
+      print('raw ${req.name}:');
+      print(m.toString().split('\n').map((l) => '  $l').join('\n'));
+    } catch (e) {
+      print('raw ${req.name}: $e');
+    }
+  }
   await t.close();
 }
