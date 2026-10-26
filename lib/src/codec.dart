@@ -74,8 +74,8 @@ class RscpCodec {
           );
       case RscpType.int64:
       case RscpType.uint64:
-        data = Uint8List(8)
-          ..buffer.asByteData().setInt64(0, m.value as int, Endian.little);
+        data = Uint8List(8);
+        _setInt64(data.buffer.asByteData(), 0, m.value as int);
       case RscpType.float32:
         data = Uint8List(4)
           ..buffer.asByteData().setFloat32(
@@ -94,7 +94,7 @@ class RscpCodec {
         final t = m.value as RscpTimestamp;
         data = Uint8List(12);
         final bd = data.buffer.asByteData();
-        bd.setInt64(0, t.seconds, Endian.little);
+        _setInt64(bd, 0, t.seconds);
         bd.setInt32(8, t.nanos, Endian.little);
       case RscpType.cstring:
         data = Uint8List.fromList(utf8.encode(m.value as String));
@@ -164,9 +164,9 @@ class RscpCodec {
       case RscpType.uint32:
         value = body.getUint32(0, Endian.little);
       case RscpType.int64:
-        value = body.getInt64(0, Endian.little);
+        value = _getInt64(body, 0, signed: true);
       case RscpType.uint64:
-        value = body.getUint64(0, Endian.little);
+        value = _getInt64(body, 0, signed: false);
       case RscpType.float32:
         value = body.getFloat32(0, Endian.little);
       case RscpType.double64:
@@ -175,7 +175,7 @@ class RscpCodec {
         // int64 seconds + int32 nanoseconds. Some senders put the seconds into the second dword; take whichever is non-zero.
         final lo = body.getUint32(0, Endian.little),
             hi = body.getUint32(4, Endian.little);
-        final secs = hi == 0 ? lo : (lo == 0 ? hi : (hi << 32) | lo);
+        final secs = hi == 0 ? lo : (lo == 0 ? hi : hi * _twoPow32 + lo);
         value = RscpTimestamp(secs, body.getInt32(8, Endian.little));
       case RscpType.cstring:
         value = utf8.decode(
@@ -287,4 +287,22 @@ class RscpCodec {
     );
     return RscpFrame(payload, ctrl, total, hasCrc);
   }
+}
+
+// 64-bit values as two 32-bit halves: dart2js has no Int64 accessors on ByteData, and JS numbers are
+// exact up to 2^53, which covers every 64-bit value RSCP actually carries (ids, timestamps, counters).
+const _twoPow32 = 0x100000000;
+
+int _getInt64(ByteData b, int offset, {required bool signed}) {
+  final lo = b.getUint32(offset, Endian.little);
+  final hi = signed
+      ? b.getInt32(offset + 4, Endian.little)
+      : b.getUint32(offset + 4, Endian.little);
+  return hi * _twoPow32 + lo;
+}
+
+void _setInt64(ByteData b, int offset, int value) {
+  final lo = value % _twoPow32;
+  b.setUint32(offset, lo, Endian.little);
+  b.setInt32(offset + 4, (value - lo) ~/ _twoPow32, Endian.little);
 }

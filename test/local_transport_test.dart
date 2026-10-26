@@ -1,3 +1,7 @@
+// Uses a TCP server socket; the local transport does not exist in browsers.
+@TestOn('vm')
+library;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';

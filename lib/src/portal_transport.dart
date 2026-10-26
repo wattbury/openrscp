@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
+import 'package:web_socket/web_socket.dart';
 
 import 'codec.dart';
 import 'message.dart';
@@ -74,11 +74,16 @@ class PortalTransport extends RscpTransport {
     await close();
     _connected = Completer<void>();
     _log('connecting to $endpoint');
-    final ws = await WebSocket.connect(endpoint.toString()).timeout(timeout);
+    // package:web_socket picks dart:io or the browser WebSocket, so the transport also runs on the web.
+    final ws = await WebSocket.connect(endpoint).timeout(timeout);
     _ws = ws;
-    _sink = ws.add;
-    _sub = _ws!.listen(
-      _onData,
+    _sink = ws.sendBytes;
+    _sub = ws.events.listen(
+      (e) => switch (e) {
+        BinaryDataReceived(:final data) => _onData(data),
+        TextDataReceived() => null,
+        CloseReceived() => _onDone(),
+      },
       onError: _onError,
       onDone: _onDone,
       cancelOnError: false,
@@ -98,7 +103,11 @@ class PortalTransport extends RscpTransport {
     _failAll(RscpTransportException('connection closed'));
     await _sub?.cancel();
     _sub = null;
-    await _ws?.close();
+    try {
+      await _ws?.close();
+    } on WebSocketConnectionClosed {
+      // Already closed by the server.
+    }
     _ws = null;
     _sink = null;
     _virtRequested = false;

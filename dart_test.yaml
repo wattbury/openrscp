@@ -1,0 +1,3 @@
+tags:
+  live:
+    skip: "talks to the real E3/DC relay; run with --run-skipped"

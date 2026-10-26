@@ -13,6 +13,29 @@ void main() {
   });
 
   group('tlv', () {
+    test('64-bit values beyond 32 bits and negative, also on the web', () {
+      for (final v in [
+        -1,
+        -22839511,
+        0x10000000005,
+        -0x10000000005,
+        9007199254740991,
+      ]) {
+        final back = RscpCodec.decodeAll(
+          RscpCodec.encodeAll([
+            RscpMessage.int64(RscpTag.SERVER_CONNECTION_ID, v),
+          ]),
+        );
+        expect(back.single.value, v);
+      }
+      final big = RscpCodec.decodeAll(
+        RscpCodec.encodeAll([
+          RscpMessage.uint64(RscpTag.DB_REQ_HISTORY_TIME_START, 0x1234567890AB),
+        ]),
+      );
+      expect(big.single.value, 0x1234567890AB);
+    });
+
     test('round trip of all scalar types', () {
       final msgs = [
         RscpMessage.none(RscpTag.EMS_REQ_POWER_PV),

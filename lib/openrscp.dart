@@ -5,7 +5,9 @@ export 'src/client.dart';
 export 'src/codec.dart';
 export 'src/crc32.dart';
 export 'src/errors.g.dart';
-export 'src/local_transport.dart';
+// Browsers cannot open TCP sockets; on the web LocalTransport is a stub that refuses to connect.
+export 'src/local_transport.dart'
+    if (dart.library.js_interop) 'src/local_transport_web.dart';
 export 'src/message.dart';
 export 'src/portal_transport.dart';
 export 'src/rijndael.dart';
