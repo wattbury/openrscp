@@ -134,6 +134,65 @@ class DbSummary {
   };
 }
 
+/// One interval of a database time series, as the unit returns it in DB_VALUE_CONTAINER.
+///
+/// The values are passed on unconverted. Whether they are energy per interval (Wh) or average
+/// power (W) is not documented; compare their sum with [DbHistory.sum] to find out
+/// (example/db_history.dart does that).
+class DbBucket {
+  /// DB_GRAPH_INDEX as reported; the position of the bucket within the requested span.
+  final double index;
+  final double solar,
+      house,
+      gridPurchase,
+      gridFeedIn,
+      batteryIn,
+      batteryOut,
+      autarkyPct,
+      consumedProductionPct,
+      socPct;
+  const DbBucket({
+    required this.index,
+    required this.solar,
+    required this.house,
+    required this.gridPurchase,
+    required this.gridFeedIn,
+    required this.batteryIn,
+    required this.batteryOut,
+    required this.autarkyPct,
+    required this.consumedProductionPct,
+    required this.socPct,
+  });
+
+  Map<String, Object> toJson() => {
+    'index': index,
+    'solar': solar,
+    'house': house,
+    'gridPurchase': gridPurchase,
+    'gridFeedIn': gridFeedIn,
+    'batteryIn': batteryIn,
+    'batteryOut': batteryOut,
+    'autarkyPct': autarkyPct,
+    'consumedProductionPct': consumedProductionPct,
+    'socPct': socPct,
+  };
+}
+
+/// A database query split into intervals: the total for the whole span plus one bucket each.
+class DbHistory {
+  final DateTime start;
+  final Duration interval, span;
+  final DbSummary sum;
+  final List<DbBucket> buckets;
+  const DbHistory({
+    required this.start,
+    required this.interval,
+    required this.span,
+    required this.sum,
+    required this.buckets,
+  });
+}
+
 /// Presence and state of one wallbox slot.
 ///
 /// A slot counts as present when the system reports the device as connected or returns an
@@ -300,35 +359,67 @@ class E3dcClient {
   }
 
   /// Summed values for [span] starting at [start] (local time). Use 1 day, 1 month or 1 year.
-  Future<DbSummary> dbSummary(DateTime start, Duration span) async {
+  Future<DbSummary> dbSummary(DateTime start, Duration span) async =>
+      (await dbHistory(start, span, span)).sum;
+
+  /// Database values from [start] over [span], split into buckets of [interval]
+  /// (e.g. 15 minutes for a day, one day for a month). One request, however many buckets.
+  Future<DbHistory> dbHistory(
+    DateTime start,
+    Duration interval,
+    Duration span,
+  ) async {
     final startS = start.toUtc().millisecondsSinceEpoch ~/ 1000;
     final m = await transport.sendOne(
       RscpMessage.container(RscpTag.DB_REQ_HISTORY_DATA_DAY, [
         RscpMessage.uint64(RscpTag.DB_REQ_HISTORY_TIME_START, startS),
         RscpMessage.uint64(
           RscpTag.DB_REQ_HISTORY_TIME_INTERVAL,
-          span.inSeconds,
+          interval.inSeconds,
         ),
         RscpMessage.uint64(RscpTag.DB_REQ_HISTORY_TIME_SPAN, span.inSeconds),
       ]),
     );
     _check(m, RscpTag.DB_HISTORY_DATA_DAY);
-    final sum =
+    final sumC =
         m.find(RscpTag.DB_SUM_CONTAINER) ??
         (m.children.isNotEmpty ? m.children.first : m);
-    double d(RscpTag t) => sum.find(t)?.asDouble ?? 0;
-    return DbSummary(
+    double d(RscpMessage c, RscpTag t) => c.find(t)?.asDouble ?? 0;
+    final sum = DbSummary(
       start: start,
       span: span,
-      solarWh: d(RscpTag.DB_DC_POWER),
-      houseWh: d(RscpTag.DB_CONSUMPTION),
-      gridPurchaseWh: d(RscpTag.DB_GRID_POWER_OUT),
-      gridFeedInWh: d(RscpTag.DB_GRID_POWER_IN),
-      batteryInWh: d(RscpTag.DB_BAT_POWER_IN),
-      batteryOutWh: d(RscpTag.DB_BAT_POWER_OUT),
-      autarkyPct: d(RscpTag.DB_AUTARKY),
-      consumedProductionPct: d(RscpTag.DB_CONSUMED_PRODUCTION),
-      socPct: d(RscpTag.DB_BAT_CHARGE_LEVEL),
+      solarWh: d(sumC, RscpTag.DB_DC_POWER),
+      houseWh: d(sumC, RscpTag.DB_CONSUMPTION),
+      gridPurchaseWh: d(sumC, RscpTag.DB_GRID_POWER_OUT),
+      gridFeedInWh: d(sumC, RscpTag.DB_GRID_POWER_IN),
+      batteryInWh: d(sumC, RscpTag.DB_BAT_POWER_IN),
+      batteryOutWh: d(sumC, RscpTag.DB_BAT_POWER_OUT),
+      autarkyPct: d(sumC, RscpTag.DB_AUTARKY),
+      consumedProductionPct: d(sumC, RscpTag.DB_CONSUMED_PRODUCTION),
+      socPct: d(sumC, RscpTag.DB_BAT_CHARGE_LEVEL),
+    );
+    final buckets = [
+      for (final c in m.children)
+        if (c.tag == RscpTag.DB_VALUE_CONTAINER.value)
+          DbBucket(
+            index: d(c, RscpTag.DB_GRAPH_INDEX),
+            solar: d(c, RscpTag.DB_DC_POWER),
+            house: d(c, RscpTag.DB_CONSUMPTION),
+            gridPurchase: d(c, RscpTag.DB_GRID_POWER_OUT),
+            gridFeedIn: d(c, RscpTag.DB_GRID_POWER_IN),
+            batteryIn: d(c, RscpTag.DB_BAT_POWER_IN),
+            batteryOut: d(c, RscpTag.DB_BAT_POWER_OUT),
+            autarkyPct: d(c, RscpTag.DB_AUTARKY),
+            consumedProductionPct: d(c, RscpTag.DB_CONSUMED_PRODUCTION),
+            socPct: d(c, RscpTag.DB_BAT_CHARGE_LEVEL),
+          ),
+    ];
+    return DbHistory(
+      start: start,
+      interval: interval,
+      span: span,
+      sum: sum,
+      buckets: buckets,
     );
   }
 

@@ -197,4 +197,38 @@ void pvTrackerTests() {
       expect(t[1].active, isFalse);
     });
   });
+
+  test(
+    'dbHistory returns the sum and one bucket per value container',
+    () async {
+      RscpMessage values(double idx, double pv, double home) =>
+          RscpMessage.container(RscpTag.DB_VALUE_CONTAINER, [
+            RscpMessage.float32(RscpTag.DB_GRAPH_INDEX, idx),
+            RscpMessage.float32(RscpTag.DB_DC_POWER, pv),
+            RscpMessage.float32(RscpTag.DB_CONSUMPTION, home),
+          ]);
+      final t = FakeTransport(
+        (_) => [
+          RscpMessage.container(RscpTag.DB_HISTORY_DATA_DAY, [
+            RscpMessage.container(RscpTag.DB_SUM_CONTAINER, [
+              RscpMessage.float32(RscpTag.DB_DC_POWER, 300),
+              RscpMessage.float32(RscpTag.DB_CONSUMPTION, 120),
+            ]),
+            values(0, 100, 40),
+            values(1, 200, 80),
+          ]),
+        ],
+      );
+      final start = DateTime.utc(2026, 10, 24);
+      final h = await E3dcClient(t)
+          .dbHistory(start, const Duration(hours: 1), const Duration(hours: 2));
+      final req = t.sent.single.single;
+      expect(req.valueOf<int>(RscpTag.DB_REQ_HISTORY_TIME_INTERVAL), 3600);
+      expect(req.valueOf<int>(RscpTag.DB_REQ_HISTORY_TIME_SPAN), 7200);
+      expect(h.sum.solarWh, 300);
+      expect(h.buckets.map((b) => b.solar), [100, 200]);
+      expect(h.buckets.last.index, 1);
+      expect(h.buckets.first.house, 40);
+    },
+  );
 }
