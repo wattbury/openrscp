@@ -572,6 +572,22 @@ class E3dcClient {
     return (m.asInt ?? 0) == 1;
   }
 
+  /// Postcode, city and country of the installation address, for weather and forecasts.
+  /// Name, street, phone and e-mail are deliberately not read.
+  Future<({String postcode, String city, String country})>
+  facilityLocation() async {
+    final m = await transport.sendOne(
+      RscpMessage.none(RscpTag.INFO_REQ_GET_FACILITY),
+    );
+    _check(m, RscpTag.INFO_GET_FACILITY);
+    String s(RscpTag t) => (m.valueOf<String>(t) ?? '').trim();
+    return (
+      postcode: s(RscpTag.INFO_POSTCODE),
+      city: s(RscpTag.INFO_CITY),
+      country: s(RscpTag.INFO_COUNTRY),
+    );
+  }
+
   /// Summed values for [span] starting at [start] (local time). Use 1 day, 1 month or 1 year.
   Future<DbSummary> dbSummary(DateTime start, Duration span) async =>
       (await dbHistory(start, span, span)).sum;

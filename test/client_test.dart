@@ -313,4 +313,21 @@ void pvTrackerTests() {
       throwsArgumentError,
     );
   });
+
+  test('facilityLocation reads only postcode, city and country', () async {
+    final t = FakeTransport(
+      (_) => [
+        RscpMessage.container(RscpTag.INFO_GET_FACILITY, [
+          RscpMessage.cstring(RscpTag.INFO_NAME, 'Name'),
+          RscpMessage.cstring(RscpTag.INFO_POSTCODE, '12345 '),
+          RscpMessage.cstring(RscpTag.INFO_CITY, 'Beispielstadt'),
+          RscpMessage.cstring(RscpTag.INFO_COUNTRY, 'DE'),
+        ]),
+      ],
+    );
+    final f = await E3dcClient(t).facilityLocation();
+    expect(f.postcode, '12345');
+    expect(f.city, 'Beispielstadt');
+    expect(f.country, 'DE');
+  });
 }
