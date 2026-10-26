@@ -231,4 +231,86 @@ void pvTrackerTests() {
       expect(h.buckets.first.house, 40);
     },
   );
+
+  test('power settings: uchar8 flags count as true', () async {
+    final t = FakeTransport(
+      (_) => [
+        RscpMessage.container(RscpTag.EMS_GET_POWER_SETTINGS, [
+          RscpMessage.bool(RscpTag.EMS_POWER_LIMITS_USED, true),
+          RscpMessage.uchar8(RscpTag.EMS_POWERSAVE_ENABLED, 1),
+          RscpMessage.uchar8(RscpTag.EMS_WEATHER_REGULATED_CHARGE_ENABLED, 0),
+          RscpMessage.uint32(RscpTag.EMS_MAX_CHARGE_POWER, 4500),
+        ]),
+      ],
+    );
+    final p = await E3dcClient(t).powerSettings();
+    expect(p.powerLimitsUsed, isTrue);
+    expect(p.powerSaveEnabled, isTrue);
+    expect(p.weatherRegulatedChargeEnabled, isFalse);
+    expect(p.maxChargePowerW, 4500);
+  });
+
+  test(
+    'setPowerSettings sends only given values with python-e3dc types',
+    () async {
+      final t = FakeTransport(
+        (_) => [
+          RscpMessage.container(RscpTag.EMS_SET_POWER_SETTINGS, [
+            RscpMessage.char8(RscpTag.EMS_RES_MAX_CHARGE_POWER, 0),
+            RscpMessage.char8(RscpTag.EMS_RES_POWERSAVE_ENABLED, 1),
+          ]),
+        ],
+      );
+      final r = await E3dcClient(t)
+          .setPowerSettings(maxChargePowerW: 3000, powerSave: true);
+      final sent = t.sent.single.single;
+      expect(sent.children.map((c) => c.tagName), [
+        'EMS_MAX_CHARGE_POWER',
+        'EMS_POWERSAVE_ENABLED',
+      ]);
+      expect(sent.children.first.type, RscpType.uint32);
+      expect(sent.children.last.type, RscpType.uchar8);
+      expect(r.ok, isTrue);
+      expect(r.adjusted, isTrue);
+    },
+  );
+
+  test('idle periods: read and write', () async {
+    RscpMessage at(RscpTag t, int h, int m) => RscpMessage.container(t, [
+      RscpMessage.uchar8(RscpTag.EMS_IDLE_PERIOD_HOUR, h),
+      RscpMessage.uchar8(RscpTag.EMS_IDLE_PERIOD_MINUTE, m),
+    ]);
+    final t = FakeTransport((req) {
+      if (req.single.tagEnum == RscpTag.EMS_REQ_SET_IDLE_PERIODS) {
+        return [RscpMessage.bool(RscpTag.EMS_SET_IDLE_PERIODS, true)];
+      }
+      return [
+        RscpMessage.container(RscpTag.EMS_GET_IDLE_PERIODS, [
+          RscpMessage.container(RscpTag.EMS_IDLE_PERIOD, [
+            RscpMessage.uchar8(RscpTag.EMS_IDLE_PERIOD_TYPE, 1),
+            RscpMessage.uchar8(RscpTag.EMS_IDLE_PERIOD_DAY, 2),
+            RscpMessage.bool(RscpTag.EMS_IDLE_PERIOD_ACTIVE, true),
+            at(RscpTag.EMS_IDLE_PERIOD_START, 0, 0),
+            at(RscpTag.EMS_IDLE_PERIOD_END, 6, 30),
+          ]),
+        ]),
+      ];
+    });
+    final c = E3dcClient(t);
+    final p = (await c.idlePeriods()).single;
+    expect(p.type, IdleType.discharge);
+    expect(p.day, 2);
+    expect(p.active, isTrue);
+    expect([p.endHour, p.endMinute], [6, 30]);
+    expect(await c.setIdlePeriods([p.copyWith(active: false)]), isTrue);
+    final sent = t.sent.last.single;
+    expect(
+      sent.children.single.find(RscpTag.EMS_IDLE_PERIOD_ACTIVE)!.value,
+      false,
+    );
+    expect(
+      () => c.setIdlePeriods([p.copyWith(startHour: 7)]),
+      throwsArgumentError,
+    );
+  });
 }

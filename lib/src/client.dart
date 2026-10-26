@@ -193,6 +193,92 @@ class DbHistory {
   });
 }
 
+/// Per-field answers of a setter: 0 accepted, 1 accepted but adjusted, −1 rejected.
+class SetResult {
+  final Map<String, int> codes;
+  const SetResult(this.codes);
+  bool get ok => !codes.values.contains(-1);
+  bool get adjusted => codes.values.contains(1);
+  @override
+  String toString() => 'SetResult($codes)';
+}
+
+enum IdleType { charge, discharge }
+
+/// One charge or discharge lock period. [day] 0..6 as the unit counts it (0 = Monday in the
+/// E3/DC portal; check against the unit's display before relying on it).
+class IdlePeriod {
+  final IdleType type;
+  final int day, startHour, startMinute, endHour, endMinute;
+  final bool active;
+  const IdlePeriod({
+    required this.type,
+    required this.day,
+    required this.active,
+    required this.startHour,
+    required this.startMinute,
+    required this.endHour,
+    required this.endMinute,
+  });
+
+  bool get isValid =>
+      day >= 0 &&
+      day <= 6 &&
+      startHour >= 0 &&
+      startHour < 24 &&
+      endHour >= 0 &&
+      endHour < 24 &&
+      startMinute >= 0 &&
+      startMinute < 60 &&
+      endMinute >= 0 &&
+      endMinute < 60 &&
+      startHour * 60 + startMinute < endHour * 60 + endMinute;
+
+  IdlePeriod copyWith({
+    bool? active,
+    int? startHour,
+    int? startMinute,
+    int? endHour,
+    int? endMinute,
+  }) => IdlePeriod(
+    type: type,
+    day: day,
+    active: active ?? this.active,
+    startHour: startHour ?? this.startHour,
+    startMinute: startMinute ?? this.startMinute,
+    endHour: endHour ?? this.endHour,
+    endMinute: endMinute ?? this.endMinute,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is IdlePeriod &&
+      other.type == type &&
+      other.day == day &&
+      other.active == active &&
+      other.startHour == startHour &&
+      other.startMinute == startMinute &&
+      other.endHour == endHour &&
+      other.endMinute == endMinute;
+
+  @override
+  int get hashCode => Object.hash(
+    type,
+    day,
+    active,
+    startHour,
+    startMinute,
+    endHour,
+    endMinute,
+  );
+
+  @override
+  String toString() =>
+      '${type.name} day $day ${active ? 'on' : 'off'} '
+      '$startHour:${startMinute.toString().padLeft(2, '0')}-'
+      '$endHour:${endMinute.toString().padLeft(2, '0')}';
+}
+
 /// Presence and state of one wallbox slot.
 ///
 /// A slot counts as present when the system reports the device as connected or returns an
@@ -346,16 +432,144 @@ class E3dcClient {
     );
     _check(m, RscpTag.EMS_GET_POWER_SETTINGS);
     return PowerSettings(
-      powerLimitsUsed: m.valueOf<bool>(RscpTag.EMS_POWER_LIMITS_USED) ?? false,
-      powerSaveEnabled: m.valueOf<bool>(RscpTag.EMS_POWERSAVE_ENABLED) ?? false,
-      weatherRegulatedChargeEnabled:
-          m.valueOf<bool>(RscpTag.EMS_WEATHER_REGULATED_CHARGE_ENABLED) ??
-          false,
+      // The unit reports some flags as bool and others as uchar8 (0/1).
+      powerLimitsUsed: _flag(m, RscpTag.EMS_POWER_LIMITS_USED),
+      powerSaveEnabled: _flag(m, RscpTag.EMS_POWERSAVE_ENABLED),
+      weatherRegulatedChargeEnabled: _flag(
+        m,
+        RscpTag.EMS_WEATHER_REGULATED_CHARGE_ENABLED,
+      ),
       maxChargePowerW: m.find(RscpTag.EMS_MAX_CHARGE_POWER)?.asInt ?? 0,
       maxDischargePowerW: m.find(RscpTag.EMS_MAX_DISCHARGE_POWER)?.asInt ?? 0,
       dischargeStartPowerW:
           m.find(RscpTag.EMS_DISCHARGE_START_POWER)?.asInt ?? 0,
     );
+  }
+
+  static bool _flag(RscpMessage m, RscpTag t) => (m.find(t)?.asInt ?? 0) != 0;
+
+  /// Changes power settings; only the given values are sent. Types follow python-e3dc, which has
+  /// used these requests for years: the limit switch as bool, powers as uint32, power save and
+  /// weather-regulated charging as uchar8. Read the settings back afterwards to confirm.
+  Future<SetResult> setPowerSettings({
+    bool? limitsUsed,
+    int? maxChargePowerW,
+    int? maxDischargePowerW,
+    int? dischargeStartPowerW,
+    bool? powerSave,
+    bool? weatherRegulatedCharge,
+  }) async {
+    final items = [
+      if (limitsUsed != null)
+        RscpMessage.bool(RscpTag.EMS_POWER_LIMITS_USED, limitsUsed),
+      if (maxDischargePowerW != null)
+        RscpMessage.uint32(RscpTag.EMS_MAX_DISCHARGE_POWER, maxDischargePowerW),
+      if (maxChargePowerW != null)
+        RscpMessage.uint32(RscpTag.EMS_MAX_CHARGE_POWER, maxChargePowerW),
+      if (dischargeStartPowerW != null)
+        RscpMessage.uint32(
+          RscpTag.EMS_DISCHARGE_START_POWER,
+          dischargeStartPowerW,
+        ),
+      if (powerSave != null)
+        RscpMessage.uchar8(RscpTag.EMS_POWERSAVE_ENABLED, powerSave ? 1 : 0),
+      if (weatherRegulatedCharge != null)
+        RscpMessage.uchar8(
+          RscpTag.EMS_WEATHER_REGULATED_CHARGE_ENABLED,
+          weatherRegulatedCharge ? 1 : 0,
+        ),
+    ];
+    if (items.isEmpty) return const SetResult({});
+    final m = await transport.sendOne(
+      RscpMessage.container(RscpTag.EMS_REQ_SET_POWER_SETTINGS, items),
+    );
+    _check(m, RscpTag.EMS_SET_POWER_SETTINGS);
+    return SetResult({
+      for (final c in m.children) c.tagName: c.isError ? -1 : (c.asInt ?? -1),
+    });
+  }
+
+  /// Limits and defaults of the unit (EMS_REQ_GET_SYS_SPECS), e.g. maxBatChargePower,
+  /// maxBatDischargPower (sic, as the unit spells it), startDischargeDefault, maxAcPower.
+  Future<Map<String, int>> sysSpecs() async {
+    final m = await transport.sendOne(
+      RscpMessage.none(RscpTag.EMS_REQ_GET_SYS_SPECS),
+    );
+    _check(m, RscpTag.EMS_GET_SYS_SPECS);
+    return {
+      for (final c in m.children)
+        if (c.tag == RscpTag.EMS_SYS_SPEC.value &&
+            c.valueOf<String>(RscpTag.EMS_SYS_SPEC_NAME) != null &&
+            c.find(RscpTag.EMS_SYS_SPEC_VALUE_INT)?.asInt != null)
+          c.valueOf<String>(RscpTag.EMS_SYS_SPEC_NAME)!: c
+              .find(RscpTag.EMS_SYS_SPEC_VALUE_INT)!
+              .asInt!,
+    };
+  }
+
+  /// Charge and discharge lock periods ("Sperrzeiten"), one per type and weekday.
+  Future<List<IdlePeriod>> idlePeriods() async {
+    final m = await transport.sendOne(
+      RscpMessage.none(RscpTag.EMS_REQ_GET_IDLE_PERIODS),
+    );
+    _check(m, RscpTag.EMS_GET_IDLE_PERIODS);
+    int i(RscpMessage? c, RscpTag t) => c?.find(t)?.asInt ?? 0;
+    return [
+      for (final p in m.children)
+        if (p.tag == RscpTag.EMS_IDLE_PERIOD.value)
+          IdlePeriod(
+            type: i(p, RscpTag.EMS_IDLE_PERIOD_TYPE) == 0
+                ? IdleType.charge
+                : IdleType.discharge,
+            day: i(p, RscpTag.EMS_IDLE_PERIOD_DAY),
+            active: _flag(p, RscpTag.EMS_IDLE_PERIOD_ACTIVE),
+            startHour: i(
+              p.find(RscpTag.EMS_IDLE_PERIOD_START),
+              RscpTag.EMS_IDLE_PERIOD_HOUR,
+            ),
+            startMinute: i(
+              p.find(RscpTag.EMS_IDLE_PERIOD_START),
+              RscpTag.EMS_IDLE_PERIOD_MINUTE,
+            ),
+            endHour: i(
+              p.find(RscpTag.EMS_IDLE_PERIOD_END),
+              RscpTag.EMS_IDLE_PERIOD_HOUR,
+            ),
+            endMinute: i(
+              p.find(RscpTag.EMS_IDLE_PERIOD_END),
+              RscpTag.EMS_IDLE_PERIOD_MINUTE,
+            ),
+          ),
+    ];
+  }
+
+  /// Writes lock periods. As in python-e3dc, each period must end after it starts on the same day.
+  /// Returns true when the unit confirms; read back with [idlePeriods] to check.
+  Future<bool> setIdlePeriods(List<IdlePeriod> periods) async {
+    for (final p in periods) {
+      if (!p.isValid) throw ArgumentError('invalid idle period: $p');
+    }
+    RscpMessage time(RscpTag t, int h, int min) => RscpMessage.container(t, [
+      RscpMessage.uchar8(RscpTag.EMS_IDLE_PERIOD_HOUR, h),
+      RscpMessage.uchar8(RscpTag.EMS_IDLE_PERIOD_MINUTE, min),
+    ]);
+    final m = await transport.sendOne(
+      RscpMessage.container(RscpTag.EMS_REQ_SET_IDLE_PERIODS, [
+        for (final p in periods)
+          RscpMessage.container(RscpTag.EMS_IDLE_PERIOD, [
+            RscpMessage.uchar8(
+              RscpTag.EMS_IDLE_PERIOD_TYPE,
+              p.type == IdleType.charge ? 0 : 1,
+            ),
+            RscpMessage.uchar8(RscpTag.EMS_IDLE_PERIOD_DAY, p.day),
+            RscpMessage.bool(RscpTag.EMS_IDLE_PERIOD_ACTIVE, p.active),
+            time(RscpTag.EMS_IDLE_PERIOD_START, p.startHour, p.startMinute),
+            time(RscpTag.EMS_IDLE_PERIOD_END, p.endHour, p.endMinute),
+          ]),
+      ]),
+    );
+    if (m.tag != RscpTag.EMS_SET_IDLE_PERIODS.value || m.isError) return false;
+    return (m.asInt ?? 0) == 1;
   }
 
   /// Summed values for [span] starting at [start] (local time). Use 1 day, 1 month or 1 year.
