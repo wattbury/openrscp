@@ -72,6 +72,40 @@ Future<void> main() async {
     }
   }
 
+  // Today, still running: once as the whole day and once only up to the last finished quarter
+  // hour, to see how the unit answers spans that end now and whether the newest buckets lag.
+  final today = DateTime(now.year, now.month, now.day);
+  final finished = now.difference(today).inMinutes ~/ 15;
+  const q = Duration(minutes: 15);
+  for (final (name, span) in [
+    ('whole day', const Duration(days: 1)),
+    ('up to now', q * finished),
+  ]) {
+    if (span == Duration.zero) continue;
+    final h = await c.dbHistory(today, q, span);
+    final pv = h.buckets.fold<double>(0, (a, b) => a + b.solar);
+    print(
+      '--- today ($name, span ${span.inMinutes} min): ${h.buckets.length} buckets',
+    );
+    print(
+      'sum container: solar ${f(h.sum.solarWh)}  sum of buckets: solar ${f(pv)}',
+    );
+    print(
+      'solar ratio buckets/sum = ${h.sum.solarWh == 0 ? 'n/a' : (pv / h.sum.solarWh).toStringAsFixed(3)}',
+    );
+    final from = (finished - 6).clamp(0, h.buckets.length);
+    for (var i = from; i < h.buckets.length && i < finished + 2; i++) {
+      final b = h.buckets[i];
+      final t = today.add(q * i);
+      print(
+        '  #$i ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}'
+        '  index ${f(b.index)}  solar ${f(b.solar)}  house ${f(b.house)}',
+      );
+    }
+  }
+  final live = await c.live();
+  print('live now: solar ${f(live.solarW.toDouble())} W');
+
   // A month in daily buckets, to see whether month views can be one request.
   final monthStart = DateTime(now.year, now.month - 1, 1);
   final days = DateTime(now.year, now.month, 1).difference(monthStart).inDays;
