@@ -219,10 +219,15 @@ void pvTrackerTests() {
           ]),
         ],
       );
-      final start = DateTime.utc(2026, 10, 24);
+      final start = DateTime(2026, 10, 24);
       final h = await E3dcClient(t)
           .dbHistory(start, const Duration(hours: 1), const Duration(hours: 2));
       final req = t.sent.single.single;
+      // Local midnight goes out as wall-clock time, whatever the machine's time zone.
+      expect(
+        req.valueOf<int>(RscpTag.DB_REQ_HISTORY_TIME_START),
+        DateTime.utc(2026, 10, 24).millisecondsSinceEpoch ~/ 1000,
+      );
       expect(req.valueOf<int>(RscpTag.DB_REQ_HISTORY_TIME_INTERVAL), 3600);
       expect(req.valueOf<int>(RscpTag.DB_REQ_HISTORY_TIME_SPAN), 7200);
       expect(h.sum.solarWh, 300);

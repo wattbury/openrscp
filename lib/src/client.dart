@@ -588,18 +588,39 @@ class E3dcClient {
     );
   }
 
+  /// [t] as local wall-clock time, encoded like seconds since the UTC epoch, as the database
+  /// expects its start time.
+  static int wallClockSeconds(DateTime t) {
+    final l = t.toLocal();
+    return DateTime.utc(
+          l.year,
+          l.month,
+          l.day,
+          l.hour,
+          l.minute,
+          l.second,
+        ).millisecondsSinceEpoch ~/
+        1000;
+  }
+
   /// Summed values for [span] starting at [start] (local time). Use 1 day, 1 month or 1 year.
   Future<DbSummary> dbSummary(DateTime start, Duration span) async =>
       (await dbHistory(start, span, span)).sum;
 
   /// Database values from [start] over [span], split into buckets of [interval]
   /// (e.g. 15 minutes for a day, one day for a month). One request, however many buckets.
+  /// Bucket values are average power (W) over the interval; the sum container is in Wh.
+  ///
+  /// The unit reads the start as wall-clock time in its own time zone, written like a UTC epoch
+  /// (verified on an S10E, firmware S10_2026_027: with the true epoch every bucket was one hour
+  /// late in CET). So [start] is taken as local wall-clock time here; app and unit are expected
+  /// to share the time zone.
   Future<DbHistory> dbHistory(
     DateTime start,
     Duration interval,
     Duration span,
   ) async {
-    final startS = start.toUtc().millisecondsSinceEpoch ~/ 1000;
+    final startS = wallClockSeconds(start);
     final m = await transport.sendOne(
       RscpMessage.container(RscpTag.DB_REQ_HISTORY_DATA_DAY, [
         RscpMessage.uint64(RscpTag.DB_REQ_HISTORY_TIME_START, startS),
